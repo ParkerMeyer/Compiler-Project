@@ -1,9 +1,9 @@
-/*
+/* Parker Meyer
  * scanner.cpp
  *
- * Written:            1 June 2020
- * Last modified:      1 June 2023
- *      Author: Michael Oudshoorn
+ * Written:            10 Oct 2026
+ * Last modified:      16 Oct 2026
+ *      Author: Parker Meyer
  */
 
 
@@ -514,7 +514,40 @@ void scanner::scan_digit()
     	// TO BE COMPLETED BEFORE THE SCANNER FUNCTIONS PROPERLY AND THE
     	// PARSER CAN BE STARTED.
 
-	// INSERT CODE HERE.
+	// INSERT CODE HERE. (lines 519-550)
+
+string digits = "";
+bool is_real = false;
+// Collect digits until we reach not a digit.
+while (isdigit(next_char))
+{
+    digits += next_char;
+    get_char();
+} 
+
+if (next_char == '.' && isdigit(following_char()))
+{
+    is_real = true;
+    digits += next_char;
+    get_char();
+
+    while (isdigit(next_char))
+    {
+        digits += next_char;
+        get_char();
+    }
+}
+
+if (is_real)
+{
+    current_real_value = stof(digits); // string to float for decimals
+    current_symbol = new symbol(symbol::real_num);
+}
+else
+{
+    current_integer_value = stoi(digits); //stoi = string to int, and takes the string of digits and makes them a actual intager numeber
+    current_symbol = new symbol(symbol::integer);
+}
 
 }
 
