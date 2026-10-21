@@ -538,6 +538,48 @@ if (next_char == '.' && isdigit(following_char()))
     }
 }
 
+
+if (next_char == 'E' || next_char == 'e')
+{
+    digits += next_char;
+    get_char();
+
+    // Lille exponents require a + or - sign.
+    if (next_char != '+' && next_char != '-')
+    {
+        error->flag(current_line_number, current_pos_on_line, 64);
+        current_symbol = new symbol(symbol::nul);
+        return;
+    }
+
+    bool negative_exponent = (next_char == '-');
+
+    digits += next_char;
+    get_char();
+
+    // An exponent must contain at least one digit.
+    if (!isdigit(next_char))
+    {
+        error->flag(current_line_number, current_pos_on_line, 64);
+        current_symbol = new symbol(symbol::nul);
+        return;
+    }
+
+    while (isdigit(next_char))
+    {
+        digits += next_char;
+        get_char();
+    }
+
+    // Integer literals cannot have negative exponents.
+    if (!is_real && negative_exponent)
+    {
+        error->flag(current_line_number, current_pos_on_line, 67);
+        current_symbol = new symbol(symbol::nul);
+        return;
+    }
+}
+
 if (is_real)
 {
     current_real_value = stof(digits); // string to float for decimals
