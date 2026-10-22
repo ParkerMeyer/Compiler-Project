@@ -2,7 +2,7 @@
  * scanner.cpp
  *
  * Written:            10 Oct 2026
- * Last modified:      16 Oct 2026
+ * Last modified:      22 Oct 2026
  *      Author: Parker Meyer
  */
 
@@ -401,6 +401,41 @@ void scanner::scan_string()
     	// PARSER CAN BE STARTED.
 
 	// INSERT CODE HERE.
+	
+current_string_value = "";
+get_char(); // Move past the opening quotation mark.
+
+
+ // Read characters until we find the closing quote.
+while (!eoln_flag && !eof_flag)
+{
+    if (next_char == '"')
+    {
+        // Two quotes together represent one quote.
+        if (following_char() == '"')
+        {
+            current_string_value += '"';
+            get_char();
+            get_char();
+        }
+        else
+        {
+            // A single quote ends the string.
+            current_symbol = new symbol(symbol::strng);
+            return;
+        }
+    }
+    else
+    {
+        current_string_value += next_char;
+        get_char();
+    }
+}
+
+// Report an error if the string was never closed.
+error->flag(current_line_number, current_pos_on_line, 60);
+current_symbol = new symbol(symbol::nul);
+
 }
 
 
@@ -525,11 +560,19 @@ while (isdigit(next_char))
     get_char();
 } 
 
-if (next_char == '.' && isdigit(following_char()))
+if (next_char == '.' && following_char() != '.')
 {
     is_real = true;
     digits += next_char;
     get_char();
+
+    if (!isdigit(next_char))
+    {
+        // A decimal point must be followed by a digit.
+        error->flag(current_line_number, current_pos_on_line, 63);
+        current_symbol = new symbol(symbol::nul);
+        return;
+    }
 
     while (isdigit(next_char))
     {
@@ -587,7 +630,7 @@ if (is_real)
 }
 else
 {
-    current_integer_value = stoi(digits); //stoi = string to int, and takes the string of digits and makes them a actual intager numeber
+    current_integer_value = static_cast<int>(stod(digits));
     current_symbol = new symbol(symbol::integer);
 }
 
