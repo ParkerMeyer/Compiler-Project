@@ -1,9 +1,7 @@
-/*
+/* Parker Meyer
  * scanner.h
- *
  * Written:            1 June 2020
- * Last modified:      1 June 2023
- *      Author: Michael Oudshoorn
+ * Last modified:      10 Oct 2026
  */
 
 #ifndef SCANNER_H_
