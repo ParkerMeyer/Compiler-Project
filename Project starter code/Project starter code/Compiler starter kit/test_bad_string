@@ -1,0 +1,5 @@
+
+program BadString is
+begin
+    writeln("Hello World);
+end BadString;

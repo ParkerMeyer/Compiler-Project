@@ -1,0 +1,5 @@
+
+program BadDecimal is
+begin
+    writeln(12.);
+end BadDecimal;

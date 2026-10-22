@@ -1,0 +1,6 @@
+
+program LargeNumbers is
+begin
+    writeln(999999999999999999999999);
+    writeln(3.5E+50);
+end LargeNumbers;

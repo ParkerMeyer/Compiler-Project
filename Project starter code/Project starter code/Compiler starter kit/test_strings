@@ -1,0 +1,8 @@
+
+program StringTest is
+begin
+    writeln("Hello World");
+    writeln("Testing my scanner");
+    writeln("CSC 4510");
+    writeln("He said ""Hello""");
+end StringTest;

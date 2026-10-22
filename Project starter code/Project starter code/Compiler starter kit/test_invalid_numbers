@@ -1,0 +1,6 @@
+
+program BadNumbers is
+begin
+    writeln(7E+);
+    writeln(12E-3);
+end BadNumbers;

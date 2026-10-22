@@ -1,0 +1,10 @@
+program Numbers is
+begin
+    writeln(123);
+    writeln(12.75);
+    writeln(2.5E-2);
+    writeln(12E+3);
+    for i in 1..10 loop
+        writeln(i);
+    end loop;
+end Numbers;
