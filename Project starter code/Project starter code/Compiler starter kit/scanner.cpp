@@ -13,7 +13,7 @@
 #include <string>
 #include <cctype>
 #include <cmath>
-
+#include <limits>
 #include "symbol.h"
 #include "error_handler.h"
 #include "token.h"
@@ -545,7 +545,6 @@ void scanner::scan_digit()
 {
 	// scan in a token beginning with a digit
 	// Note that a unary operator such as -1 would be detected as a minus sign followed by a digit.
-
     	// TO BE COMPLETED BEFORE THE SCANNER FUNCTIONS PROPERLY AND THE
     	// PARSER CAN BE STARTED.
 
@@ -623,15 +622,49 @@ if (next_char == 'E' || next_char == 'e')
     }
 }
 
-if (is_real)
+
+try
 {
-    current_real_value = stof(digits); // string to float for decimals
-    current_symbol = new symbol(symbol::real_num);
+    // Convert the number into a value we can check.
+    double value = stod(digits);
+
+    if (is_real)
+    {
+        // Check if the real number is too large.
+        if (abs(value) > numeric_limits<float>::max())
+        {
+            error->flag(current_line_number, current_pos_on_line, 66);
+            current_symbol = new symbol(symbol::nul);
+            return;
+        }
+
+        current_real_value = static_cast<float>(value);
+        current_symbol = new symbol(symbol::real_num);
+    }
+    else
+    {
+        // Check if the integer is too large.
+        if (value > numeric_limits<int>::max() ||
+            value < numeric_limits<int>::min())
+        {
+            error->flag(current_line_number, current_pos_on_line, 68);
+            current_symbol = new symbol(symbol::nul);
+            return;
+        }
+
+        current_integer_value = static_cast<int>(value);
+        current_symbol = new symbol(symbol::integer);
+    }
 }
-else
+catch (const exception&)
 {
-    current_integer_value = static_cast<int>(stod(digits));
-    current_symbol = new symbol(symbol::integer);
+    // Report an error if the number cannot be converted.
+    if (is_real)
+        error->flag(current_line_number, current_pos_on_line, 66);
+    else
+        error->flag(current_line_number, current_pos_on_line, 68);
+
+    current_symbol = new symbol(symbol::nul);
 }
 
 }
