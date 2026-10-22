@@ -1,6 +1,6 @@
 all:	compiler.o error_handler.o lille_exception.o scanner.o id_table.o symbol.o token.o
 	g++ -o compiler compiler.o error_handler.o lille_exception.o scanner.o symbol.o token.o
-	echo Compilation complete.
+	#echo Compilation complete.
 
 compiler.o:	id_table.o error_handler.o lille_exception.o scanner.o symbol.o compiler.cpp
 	g++ -std=c++20 -c compiler.cpp
