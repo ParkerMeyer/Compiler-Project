@@ -21,9 +21,15 @@ private:
     void expect(symbol::symbol_type expected);
     void program();
     void block();
+    void declaration();
+    void identifier_list();
+    void type_name();
+    void parameter_list();
+    void parameter();
     void statement_list();
     void statement();
-
+    bool starts_expression();
+    void expression();
 public:
     parser(scanner* s, error_handler* e);
     void parse();
