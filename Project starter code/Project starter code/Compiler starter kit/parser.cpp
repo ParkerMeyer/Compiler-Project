@@ -4,8 +4,8 @@
  * parser.cpp
  *
  * Implements recursive-descent parsing for Lille.
- * Initial implementation handles program structure,
- * blocks, and NULL statements.
+ * Implements program structure, declarations, simple and compound
+ * statements, and precedence-aware expression parsing.
  */
 
 #include "parser.h"
@@ -249,38 +249,145 @@ bool parser::starts_expression() {
            scan->have(symbol::odd_sym);
 }
 
-// Initial expression parser.
-// Currently handles literals, identifiers, function calls,
-// parentheses, and prefix operators.
-// Binary operators and precedence will be added next.
+// <expr> ::= <simple_expr> [ <relop> <simple_expr> ]
+//          | <simple_expr> IN <range>
 void parser::expression() {
-    if (scan->have(symbol::plus_sym) ||
-        scan->have(symbol::minus_sym) ||
-        scan->have(symbol::not_sym) ||
-        scan->have(symbol::odd_sym)) {
+    simple_expression();
+
+    // FIRST(relop): comparison operators.
+    if (scan->have(symbol::equals_sym) ||
+        scan->have(symbol::not_equals_sym) ||
+        scan->have(symbol::less_than_sym) ||
+        scan->have(symbol::greater_than_sym) ||
+        scan->have(symbol::less_or_equal_sym) ||
+        scan->have(symbol::greater_or_equal_sym)) {
+
+        // Consume whichever comparison operator is present.
+        if (scan->have(symbol::equals_sym))
+            expect(symbol::equals_sym);
+        else if (scan->have(symbol::not_equals_sym))
+            expect(symbol::not_equals_sym);
+        else if (scan->have(symbol::less_than_sym))
+            expect(symbol::less_than_sym);
+        else if (scan->have(symbol::greater_than_sym))
+            expect(symbol::greater_than_sym);
+        else if (scan->have(symbol::less_or_equal_sym))
+            expect(symbol::less_or_equal_sym);
+        else
+            expect(symbol::greater_or_equal_sym);
+
+        simple_expression();
+    }
+    else if (scan->have(symbol::in_sym)) {
+        expect(symbol::in_sym);
+        range();
+    }
+}
+
+
+// <simple_expr> ::= <expr2> { & <expr2> }*
+void parser::simple_expression() {
+    expression2();
+
+    // String concatenation.
+    while (scan->have(symbol::ampersand_sym)) {
+        expect(symbol::ampersand_sym);
+        expression2();
+    }
+}
+
+
+// <expr2> ::= <term> { (+ | - | OR) <term> }*
+void parser::expression2() {
+    term();
+
+    while (scan->have(symbol::plus_sym) ||
+           scan->have(symbol::minus_sym) ||
+           scan->have(symbol::or_sym)) {
 
         if (scan->have(symbol::plus_sym))
             expect(symbol::plus_sym);
         else if (scan->have(symbol::minus_sym))
             expect(symbol::minus_sym);
-        else if (scan->have(symbol::not_sym))
-            expect(symbol::not_sym);
         else
-            expect(symbol::odd_sym);
+            expect(symbol::or_sym);
 
+        term();
+    }
+}
+
+
+// <term> ::= <factor> { (* | / | AND) <factor> }*
+void parser::term() {
+    factor();
+
+    while (scan->have(symbol::asterisk_sym) ||
+           scan->have(symbol::slash_sym) ||
+           scan->have(symbol::and_sym)) {
+
+        if (scan->have(symbol::asterisk_sym))
+            expect(symbol::asterisk_sym);
+        else if (scan->have(symbol::slash_sym))
+            expect(symbol::slash_sym);
+        else
+            expect(symbol::and_sym);
+
+        factor();
+    }
+}
+
+
+// <factor> ::= <primary> [ ** <primary> ]
+//            | [ + | - ] <primary>
+void parser::factor() {
+
+    // A factor can start with a unary sign.
+    if (scan->have(symbol::plus_sym) ||
+        scan->have(symbol::minus_sym)) {
+
+        if (scan->have(symbol::plus_sym))
+            expect(symbol::plus_sym);
+        else
+            expect(symbol::minus_sym);
+
+        primary();
+    }
+    else {
+        primary();
+
+        // Exponentiation is optional.
+        if (scan->have(symbol::power_sym)) {
+            expect(symbol::power_sym);
+            primary();
+        }
+    }
+}
+
+
+// <primary> recognizes identifiers, literals,
+// parentheses, Boolean values, NOT, and ODD.
+void parser::primary() {
+
+    if (scan->have(symbol::not_sym)) {
+        expect(symbol::not_sym);
+        expression();
+    }
+    else if (scan->have(symbol::odd_sym)) {
+        expect(symbol::odd_sym);
         expression();
     }
     else if (scan->have(symbol::left_paren_sym)) {
         expect(symbol::left_paren_sym);
-        expression();
+        simple_expression();
         expect(symbol::right_paren_sym);
     }
     else if (scan->have(symbol::identifier)) {
         expect(symbol::identifier);
 
-        // An identifier can be followed by function arguments.
+        // Optional function argument list.
         if (scan->have(symbol::left_paren_sym)) {
             expect(symbol::left_paren_sym);
+
             expression();
 
             while (scan->have(symbol::comma_sym)) {
@@ -302,6 +409,7 @@ void parser::expression() {
     else if (scan->have(symbol::false_sym))
         expect(symbol::false_sym);
     else {
+        // Unexpected token where a primary is required.
         errors->flag(scan->this_token(), 92);
         throw parse_failed{};
     }
@@ -392,12 +500,93 @@ void parser::statement() {
         if (wrapped)
             expect(symbol::right_paren_sym);
     }
+
     else if (scan->have(symbol::null_sym)) {
         expect(symbol::null_sym);
     }
+    else if (scan->have(symbol::if_sym)) {
+        if_statement();
+    }
+    else if (scan->have(symbol::loop_sym)) {
+        loop_statement();
+    }
+    else if (scan->have(symbol::for_sym)) {
+        for_statement();
+    }
+    else if (scan->have(symbol::while_sym)) {
+        while_statement();
+    }
     else {
-        // Compound statements will be implemented next.
         errors->flag(scan->this_token(), 80);
         throw parse_failed{};
     }
+} // End of statement()
+
+// IF <expr> THEN <statement_list>
+// {ELSIF <expr> THEN <statement_list>}*
+// [ELSE <statement_list>] END IF
+void parser::if_statement() {
+    expect(symbol::if_sym);
+    expression();
+    expect(symbol::then_sym);
+    statement_list();
+
+    // ELSIF may appear zero or more times.
+    while (scan->have(symbol::elsif_sym)) {
+        expect(symbol::elsif_sym);
+        expression();
+        expect(symbol::then_sym);
+        statement_list();
+    }
+
+    // ELSE is optional.
+    if (scan->have(symbol::else_sym)) {
+        expect(symbol::else_sym);
+        statement_list();
+    }
+
+    expect(symbol::end_sym);
+    expect(symbol::if_sym);
+}
+
+
+// LOOP <statement_list> END LOOP
+void parser::loop_statement() {
+    expect(symbol::loop_sym);
+    statement_list();
+    expect(symbol::end_sym);
+    expect(symbol::loop_sym);
+}
+
+
+// WHILE <expr> <loop_statement>
+void parser::while_statement() {
+    expect(symbol::while_sym);
+    expression();
+
+    // Reuse the existing loop grammar.
+    loop_statement();
+}
+
+
+// FOR <ident> IN [REVERSE] <range> <loop_statement>
+void parser::for_statement() {
+    expect(symbol::for_sym);
+    expect(symbol::identifier);
+    expect(symbol::in_sym);
+
+    // REVERSE is optional.
+    if (scan->have(symbol::reverse_sym))
+        expect(symbol::reverse_sym);
+
+    range();
+    loop_statement();
+}
+
+
+// <range> ::= <simple_expr> .. <simple_expr>
+void parser::range() {
+    simple_expression();
+    expect(symbol::range_sym);
+    simple_expression();
 }
