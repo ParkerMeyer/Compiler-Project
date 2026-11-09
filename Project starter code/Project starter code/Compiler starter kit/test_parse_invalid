@@ -1,0 +1,4 @@
+program Test is
+begin
+    null
+end Test;
