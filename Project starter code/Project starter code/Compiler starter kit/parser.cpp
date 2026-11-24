@@ -378,18 +378,24 @@ bool parser::starts_expression() {
  * Parse a complete expression and return its type.
  * Relational comparisons and IN expressions produce BOOLEAN.
  */
+
+/*
+ * Parse complete expressions and check relational operands.
+ * Comparisons must use compatible types and return BOOLEAN.
+ */
 lille_type parser::expression() {
 
-    // Get the type of the first simple expression.
     lille_type result_type = simple_expression();
 
-    // Check for relational comparison operators.
     if (scan->have(symbol::equals_sym) ||
         scan->have(symbol::not_equals_sym) ||
         scan->have(symbol::less_than_sym) ||
         scan->have(symbol::greater_than_sym) ||
         scan->have(symbol::less_or_equal_sym) ||
         scan->have(symbol::greater_or_equal_sym)) {
+
+        // Save the comparison operator for error reporting.
+        token operator_token = *scan->this_token();
 
         if (scan->have(symbol::equals_sym))
             expect(symbol::equals_sym);
@@ -404,24 +410,31 @@ lille_type parser::expression() {
         else
             expect(symbol::greater_or_equal_sym);
 
-        // Parse the expression on the right side.
-        simple_expression();
+        // Determine the right operand's type.
+        lille_type right_type = simple_expression();
 
-        // Comparisons produce BOOLEAN results.
+        // Initially require matching known operand types.
+        if (!result_type.is_type(lille_type::type_unknown) &&
+            !right_type.is_type(lille_type::type_unknown) &&
+            !result_type.is_type(right_type)) {
+
+            // Error 114: Types of expressions must match.
+            errors->flag(&operator_token, 114);
+            throw parse_failed{};
+        }
+
+        // Relational comparisons produce BOOLEAN.
         return lille_type(lille_type::type_boolean);
     }
     else if (scan->have(symbol::in_sym)) {
         expect(symbol::in_sym);
         range();
 
-        // IN expressions also produce BOOLEAN results.
         return lille_type(lille_type::type_boolean);
     }
 
-    // No comparison operator: return the original type.
     return result_type;
 }
-
 
 // <simple_expr> ::= <expr2> { & <expr2> }*
 
@@ -429,24 +442,49 @@ lille_type parser::expression() {
  * Parse a simple expression and return its type.
  * Handles string concatenation using the & operator.
  */
+
+/*
+ * Parse string concatenation expressions.
+ * The & operator requires STRING operands.
+ */
 lille_type parser::simple_expression() {
 
     // Get the type of the first expression.
     lille_type result_type = expression2();
 
-    // Process string concatenation operators.
     while (scan->have(symbol::ampersand_sym)) {
+
+        // Save the operator for error reporting.
+        token operator_token = *scan->this_token();
+
         expect(symbol::ampersand_sym);
 
-        // Parse the next part of the expression.
-        expression2();
+        // Get the type of the next expression.
+        lille_type right_type = expression2();
 
-        // Compatibility checking will be added later.
-        result_type = lille_type(lille_type::type_unknown);
+        // Check both operand types when known.
+        if (!result_type.is_type(lille_type::type_unknown) &&
+            !right_type.is_type(lille_type::type_unknown)) {
+
+            if (!result_type.is_type(lille_type::type_string) ||
+                !right_type.is_type(lille_type::type_string)) {
+
+                // Error 115: Both expressions must be strings.
+                errors->flag(&operator_token, 115);
+                throw parse_failed{};
+            }
+
+            result_type = lille_type(lille_type::type_string);
+        }
+        else {
+            // Some expression types are not implemented yet.
+            result_type = lille_type(lille_type::type_unknown);
+        }
     }
 
     return result_type;
 }
+
 
 
 // <expr2> ::= <term> { (+ | - | OR) <term> }*
@@ -617,35 +655,81 @@ lille_type parser::term() {
  * Parse a factor and return its type.
  * Handles unary signs and optional exponentiation.
  */
+
+/*
+ * Parse a factor and determine its resulting type.
+ * Unary signs and exponentiation require numeric operands.
+ */
 lille_type parser::factor() {
 
-    // Check for an optional unary plus or minus.
+    // Check for unary plus or minus.
     if (scan->have(symbol::plus_sym) ||
         scan->have(symbol::minus_sym)) {
+
+        // Save the operator for error reporting.
+        token operator_token = *scan->this_token();
 
         if (scan->have(symbol::plus_sym))
             expect(symbol::plus_sym);
         else
             expect(symbol::minus_sym);
 
-        // Return the type of the primary expression.
-        return primary();
+        lille_type operand_type = primary();
+
+        // Unary signs require INTEGER or REAL.
+        if (!operand_type.is_type(lille_type::type_unknown) &&
+            !operand_type.is_type(lille_type::type_integer) &&
+            !operand_type.is_type(lille_type::type_real)) {
+
+            errors->flag(&operator_token, 118);
+            throw parse_failed{};
+        }
+
+        return operand_type;
     }
 
     // Get the type of the primary expression.
     lille_type result_type = primary();
 
-    // Exponentiation is optional.
+    // Check for exponentiation.
     if (scan->have(symbol::power_sym)) {
-        expect(symbol::power_sym);
-        primary();
 
-        // Full exponentiation type checking comes later.
+        token operator_token = *scan->this_token();
+        expect(symbol::power_sym);
+
+        lille_type exponent_type = primary();
+
+        // Both operands must be numeric when known.
+        bool left_numeric =
+            result_type.is_type(lille_type::type_integer) ||
+            result_type.is_type(lille_type::type_real);
+
+        bool right_numeric =
+            exponent_type.is_type(lille_type::type_integer) ||
+            exponent_type.is_type(lille_type::type_real);
+
+        if ((!left_numeric &&
+             !result_type.is_type(lille_type::type_unknown)) ||
+            (!right_numeric &&
+             !exponent_type.is_type(lille_type::type_unknown))) {
+
+            errors->flag(&operator_token, 118);
+            throw parse_failed{};
+        }
+
+        // Preserve the type when both numeric types match.
+        if (left_numeric && right_numeric &&
+            result_type.is_type(exponent_type)) {
+            return result_type;
+        }
+
+        // Mixed or unknown types need further semantic rules.
         return lille_type(lille_type::type_unknown);
     }
 
     return result_type;
 }
+
 
 /*
  * Parse a primary expression and return its type.
@@ -665,14 +749,19 @@ lille_type parser::primary() {
 
         return lille_type(lille_type::type_boolean);
     }
+    
     else if (scan->have(symbol::left_paren_sym)) {
         expect(symbol::left_paren_sym);
-        simple_expression();
+
+        // Get the type of the expression inside parentheses.
+        lille_type inner_type = simple_expression();
+
         expect(symbol::right_paren_sym);
 
-        // Parenthesized expression types will be handled later.
-        return lille_type(lille_type::type_unknown);
+        // Parentheses preserve the expression's type.
+        return inner_type;
     }
+
     else if (scan->have(symbol::identifier)) {
 
         token name_token = *scan->this_token();
