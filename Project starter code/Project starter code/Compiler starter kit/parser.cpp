@@ -1,3 +1,4 @@
+
 /*
  * Parker Meyer
  * CSC-4510 - Compiler Project
@@ -6,6 +7,7 @@
  * Implements recursive-descent parsing for Lille.
  * Implements program structure, declarations, simple and compound
  * statements, and precedence-aware expression parsing.
+ * Semantic analysis: checks declared assignment targets using the symbol table.
  */
 
 #include "parser.h"
@@ -54,6 +56,22 @@ void parser::program() {
     expect(symbol::identifier);
     expect(symbol::is_sym);
 
+    // Register Lille's built-in conversion functions.
+    // These are available without being declared by the user.
+    lille_type builtin_type(lille_type::type_func);
+    lille_kind builtin_kind(lille_kind::unknown);
+
+    id_tab->insert_identifier(
+        "INT2REAL", builtin_type, builtin_kind, 0, 0);
+
+    id_tab->insert_identifier(
+        "REAL2INT", builtin_type, builtin_kind, 0, 0);
+
+    id_tab->insert_identifier(
+        "INT2STRING", builtin_type, builtin_kind, 0, 0);
+
+    id_tab->insert_identifier(
+        "REAL2STRING", builtin_type, builtin_kind, 0, 0);
 
     // Store the program name in global scope 0.
     id_tab->insert_identifier(
@@ -63,7 +81,6 @@ void parser::program() {
         program_line,
         program_position
     );
-
 
     // Enter the program's scope.
     id_tab->enter_scope();
@@ -76,8 +93,6 @@ void parser::program() {
     expect(symbol::semicolon_sym);
 }
 
-// Initial block implementation.
-// Declaration parsing will be added next.
 // <block> ::= { <declaration> }* begin <statement_list> end [ <ident> ]
 void parser::block() {
 
@@ -106,11 +121,11 @@ void parser::declaration() {
         identifier_list();
         expect(symbol::colon_sym);
 
-        // CONSTANT is optional in the grammar.
-        if (scan->have(symbol::constant_sym))
+        // Save the CONSTANT modifier before consuming it.
+        bool is_constant = scan->have(symbol::constant_sym);
+        if (is_constant)
             expect(symbol::constant_sym);
-            bool is_constant = scan->have(symbol::constant_sym);
-        
+
         // Determine the declared type.
         lille_type declared_type(lille_type::type_unknown);
 
@@ -149,7 +164,6 @@ void parser::declaration() {
                 throw parse_failed{};
             }
         }
-
 
         // A declaration can optionally have a literal initializer.
         // Type and constant restrictions belong to semantic analysis.
@@ -271,7 +285,6 @@ void parser::parameter() {
 
     type_name();
 }
-
 
 
 // FIRST(statement) tells us which tokens can begin a statement.
@@ -451,6 +464,29 @@ void parser::primary() {
         expect(symbol::right_paren_sym);
     }
     else if (scan->have(symbol::identifier)) {
+
+        // Save the identifier before consuming it.
+        token name_token = *scan->this_token();
+
+        // Look up the identifier in the active scopes.
+        lille_type found_type;
+        lille_kind found_kind;
+        int found_scope = -1;
+
+        bool found = id_tab->lookup_identifier(
+            name_token.get_identifier_value(),
+            found_type,
+            found_kind,
+            found_scope
+        );
+
+        // Report an undeclared identifier.
+        if (!found)
+        {
+            errors->flag(&name_token, 81);
+            throw parse_failed{};
+        }
+
         expect(symbol::identifier);
 
         // Optional function argument list.
@@ -488,10 +524,30 @@ void parser::primary() {
 void parser::statement() {
 
     if (scan->have(symbol::identifier)) {
+        // Save the identifier before consuming its token.
+        token name_token = *scan->this_token();
         expect(symbol::identifier);
 
         if (scan->have(symbol::becomes_sym)) {
-            // Assignment: identifier := expression
+            // Assignment: identifier := expression.
+            lille_type found_type;
+            lille_kind found_kind;
+            int found_scope = -1;
+
+            // Look up the assignment target, searching outward through scopes.
+            bool found = id_tab->lookup_identifier(
+                name_token.get_identifier_value(),
+                found_type,
+                found_kind,
+                found_scope
+            );
+
+            // Error 81: assignment to an undeclared identifier.
+            if (!found) {
+                errors->flag(&name_token, 81);
+                throw parse_failed{};
+            }
+
             expect(symbol::becomes_sym);
             expression();
         }
