@@ -1,3 +1,13 @@
+ /*
+ * Parker Meyer - CSC-4510
+ * Parser Phase: Updated the compiler driver to
+ * integrate the recursive-descent parser.
+ */
+ 
+ 
+ 
+ 
+ 
  /*************************************************************************************************
  *
  * lille Compiler
@@ -40,11 +50,11 @@
 
 #include "lille_exception.h"
 #include "scanner.h"
-//#include "parser.h"
+#include "parser.h"
 #include "symbol.h"
 #include "error_handler.h"
 //#include "code_gen.h"
-//#include "id_table.h"
+#include "id_table.h"
 
 using namespace std;
 using namespace std::chrono;
@@ -61,7 +71,7 @@ string listing_filename;						// name of the listing file to be generated if nee
 
 error_handler* err;								// error handler object
 scanner* scan;									// scanner object
-//parser* parse;									// parser object
+parser* syntax_parser;				// parser object
 id_table* id_tab = NULL;								// symbol table object
 //code_gen* code;									// code generator
 
@@ -200,15 +210,22 @@ bool process_command_line(int argc, char *argv[]) {
 			else
 				err = new error_handler(source_filename, listing_filename);
 
-			// THE FOLLOWIG CODE IS FOR TESTING PURPOSES ONLY.
-                        scan = new scanner(source_filename, id_tab, err);
 
-                        token* tok;
-                        do
-                        {
-                                tok = scan->get_token();
-                        } while (tok->get_sym() != symbol::end_of_program);
-                        //END OF CODE FOR TESTING PURPOSES
+    // Create the identifier table for semantic analysis.
+    id_tab = new id_table(err);
+
+
+
+ // Create the scanner to recognize Lille tokens.
+scan = new scanner(source_filename, id_tab, err);
+
+// Create the parser and connect the symbol table.
+syntax_parser = new parser(scan, err);
+syntax_parser->set_id_table(id_tab);
+
+// Start parsing the program.
+syntax_parser->parse();
+
 
 
 			// Create a symbol_table object
