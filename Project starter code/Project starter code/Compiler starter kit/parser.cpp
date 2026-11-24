@@ -197,7 +197,8 @@ void parser::declaration() {
                            : symbol::procedure_sym);
 
         expect(symbol::identifier);
-
+        // Enter a separate scope for procedure/function parameters.
+        id_tab->enter_scope();
         // Formal parameters are optional.
         if (scan->have(symbol::left_paren_sym)) {
             expect(symbol::left_paren_sym);
@@ -213,10 +214,13 @@ void parser::declaration() {
 
         expect(symbol::is_sym);
 
-        // Procedures and functions contain their own blocks.
-        block();
+// Procedures and functions contain their own blocks.
+block();
 
-        expect(symbol::semicolon_sym);
+// Print and exit this procedure/function scope.
+id_tab->exit_scope();
+
+expect(symbol::semicolon_sym);
     }
     else {
         errors->flag(scan->this_token(), 106);
@@ -269,10 +273,17 @@ void parser::parameter_list() {
 }
 
 
-// <param> ::= <ident_list> : <param_kind> <type>
+
 void parser::parameter() {
     identifier_list();
     expect(symbol::colon_sym);
+
+    // Determine whether parameters are VALUE or REF.
+    lille_kind param_kind(
+        scan->have(symbol::value_sym)
+            ? lille_kind::value_param
+            : lille_kind::ref_param
+    );
 
     if (scan->have(symbol::value_sym))
         expect(symbol::value_sym);
@@ -283,7 +294,36 @@ void parser::parameter() {
         throw parse_failed{};
     }
 
+    // Determine the parameter's type.
+    lille_type param_type(lille_type::type_unknown);
+
+    if (scan->have(symbol::integer_sym))
+        param_type = lille_type(lille_type::type_integer);
+    else if (scan->have(symbol::real_sym))
+        param_type = lille_type(lille_type::type_real);
+    else if (scan->have(symbol::string_sym))
+        param_type = lille_type(lille_type::type_string);
+    else if (scan->have(symbol::boolean_sym))
+        param_type = lille_type(lille_type::type_boolean);
+
     type_name();
+
+    // Insert parameters into the current scope's BST.
+    for (token& name_token : declaration_names) {
+        bool inserted = id_tab->insert_identifier(
+            name_token.get_identifier_value(),
+            param_type,
+            param_kind,
+            name_token.get_line_number(),
+            name_token.get_pos_on_line()
+        );
+
+        // Reject duplicate parameter declarations.
+        if (!inserted) {
+            errors->flag(&name_token, 82);
+            throw parse_failed{};
+        }
+    }
 }
 
 
@@ -548,8 +588,30 @@ void parser::statement() {
                 throw parse_failed{};
             }
 
+            // Error 85: Only variables and reference
+            // parameters can be assignment targets.
+            if (!found_kind.is_kind(lille_kind::variable) &&
+                !found_kind.is_kind(lille_kind::ref_param))
+            {
+                errors->flag(&name_token, 85);
+                throw parse_failed{};
+            }
+
+
             expect(symbol::becomes_sym);
+
+            // Check whether a string literal is being assigned
+            // to a variable that is not of type STRING.
+            if (scan->have(symbol::strng) &&
+                !found_type.is_type(lille_type::type_string))
+            {
+                // Error 93: Assignment types are incompatible.
+                errors->flag(scan->this_token(), 93);
+                throw parse_failed{};
+            }
+
             expression();
+
         }
         else if (scan->have(symbol::left_paren_sym)) {
             // Procedure call with arguments.
@@ -695,9 +757,36 @@ void parser::while_statement() {
 
 
 // FOR <ident> IN [REVERSE] <range> <loop_statement>
+
+/*
+ * Parse a FOR loop and register its loop identifier.
+ * Each FOR loop has its own scope.
+ */
 void parser::for_statement() {
     expect(symbol::for_sym);
+
+    // Remember the loop identifier before consuming it.
+    token loop_token = *scan->this_token();
     expect(symbol::identifier);
+
+    // Create a new scope for this FOR loop.
+    id_tab->enter_scope();
+
+    // Insert the loop identifier as an INTEGER.
+    bool inserted = id_tab->insert_identifier(
+        loop_token.get_identifier_value(),
+        lille_type(lille_type::type_integer),
+        lille_kind(lille_kind::for_ident),
+        loop_token.get_line_number(),
+        loop_token.get_pos_on_line()
+    );
+
+    // Reject duplicate declarations in this scope.
+    if (!inserted) {
+        errors->flag(&loop_token, 82);
+        throw parse_failed{};
+    }
+
     expect(symbol::in_sym);
 
     // REVERSE is optional.
@@ -706,7 +795,11 @@ void parser::for_statement() {
 
     range();
     loop_statement();
+
+    // Print the active symbol tables before exiting.
+    id_tab->exit_scope();
 }
+
 
 
 // <range> ::= <simple_expr> .. <simple_expr>
