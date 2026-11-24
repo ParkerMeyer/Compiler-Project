@@ -17,6 +17,7 @@
 #include <iostream>
 #include <string>
 #include <stdexcept>
+#include <vector>
 
 #include "token.h"
 #include "error_handler.h"
@@ -38,13 +39,22 @@ private:
         int line_number;
         int position;
 
+
+        // Parameter types and passing modes for procedures/functions.
+        vector<lille_type> parameter_types;
+        vector<lille_kind> parameter_modes;
+
+        // Functions also store their declared return type.
+        lille_type return_type = lille_type(lille_type::type_unknown);
+
+
         bst_node* left = nullptr;
         bst_node* right = nullptr;
     };
 
     // Print identifiers in alphabetical order.
     void print_tree_inorder(bst_node* node);
-    
+
     // Free all nodes belonging to a BST.
     void delete_tree(bst_node* node);
 
@@ -74,6 +84,29 @@ public:
                            lille_type& found_type,
                            lille_kind& found_kind,
                            int& found_scope);
+
+    
+    // Add a parameter to a procedure or function.
+    bool add_routine_parameter(const string& routine_name,
+                               lille_type parameter_type,
+                               lille_kind parameter_mode);
+
+
+    // Retrieve a procedure or function's parameter information.
+    bool get_routine_signature(
+        const string& routine_name,
+        vector<lille_type>& parameter_types,
+        vector<lille_kind>& parameter_modes,
+        lille_type& return_type
+    );
+
+
+    // Set the declared return type of a function.
+    bool set_routine_return_type(
+        const string& routine_name,
+        lille_type return_type
+    );
+
 
     void dump_id_table(bool dump_all = true);
 };
