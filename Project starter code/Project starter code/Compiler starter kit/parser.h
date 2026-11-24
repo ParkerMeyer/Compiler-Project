@@ -12,11 +12,17 @@
 
 #include "scanner.h"
 #include "error_handler.h"
+#include "id_table.h"
+#include <vector>
 
 class parser {
 private:
     scanner* scan;
     error_handler* errors;
+        // Pointer to the compiler's shared symbol table.
+    id_table* id_tab = nullptr;
+    // Temporarily save identifiers from a declaration.
+    std::vector<token> declaration_names;
 
     void expect(symbol::symbol_type expected);
     void program();
@@ -28,11 +34,26 @@ private:
     void parameter();
     void statement_list();
     void statement();
+    void if_statement();
+    void loop_statement();
+    void for_statement();
+    void while_statement();
+    void range();
     bool starts_expression();
     void expression();
+    void simple_expression();
+    void expression2();
+    void term();
+    void factor();
+    void primary();
 public:
     parser(scanner* s, error_handler* e);
     void parse();
+        // Connect the parser to the existing symbol table.
+    void set_id_table(id_table* table) {
+        id_tab = table;
+    }
 };
+
 
 #endif
