@@ -23,6 +23,9 @@ private:
     id_table* id_tab = nullptr;
     // Temporarily save identifiers from a declaration.
     std::vector<token> declaration_names;
+    // Track return types and RETURN statements for active routines.
+std::vector<lille_type> routine_return_types;
+std::vector<bool> routine_has_return;
 
     void expect(symbol::symbol_type expected);
     void program();
@@ -30,8 +33,8 @@ private:
     void declaration();
     void identifier_list();
     void type_name();
-    void parameter_list();
-    void parameter();
+    void parameter_list(const std::string& routine_name);
+    void parameter(const std::string& routine_name);
     void statement_list();
     void statement();
     void if_statement();
