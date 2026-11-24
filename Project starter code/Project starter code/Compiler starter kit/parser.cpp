@@ -85,10 +85,66 @@ void parser::program() {
         program_position
     );
 
+
     // Enter the program's scope.
     id_tab->enter_scope();
 
+    // Register the parameter signatures of Lille's
+    // four built-in conversion functions.
+
+    // INT2REAL accepts one INTEGER by value.
+    id_tab->add_routine_parameter(
+        "INT2REAL",
+        lille_type(lille_type::type_integer),
+        lille_kind(lille_kind::value_param)
+    );
+
+    // REAL2INT accepts one REAL by value.
+    id_tab->add_routine_parameter(
+        "REAL2INT",
+        lille_type(lille_type::type_real),
+        lille_kind(lille_kind::value_param)
+    );
+
+    // INT2STRING accepts one INTEGER by value.
+    id_tab->add_routine_parameter(
+        "INT2STRING",
+        lille_type(lille_type::type_integer),
+        lille_kind(lille_kind::value_param)
+    );
+
+    // REAL2STRING accepts one REAL by value.
+    id_tab->add_routine_parameter(
+        "REAL2STRING",
+        lille_type(lille_type::type_real),
+        lille_kind(lille_kind::value_param)
+    );
+
+
+    // Set built-in function return types.
+    id_tab->set_routine_return_type(
+        "INT2REAL",
+        lille_type(lille_type::type_real)
+    );
+
+    id_tab->set_routine_return_type(
+        "REAL2INT",
+        lille_type(lille_type::type_integer)
+    );
+
+    id_tab->set_routine_return_type(
+        "INT2STRING",
+        lille_type(lille_type::type_string)
+    );
+
+    id_tab->set_routine_return_type(
+        "REAL2STRING",
+        lille_type(lille_type::type_string)
+    );
+
+
     block();
+
 
     // Print the symbol table and exit the program's scope.
     id_tab->exit_scope();
@@ -102,6 +158,8 @@ void parser::block() {
     // FIRST(declaration) contains identifiers, PROCEDURE, and FUNCTION.
     // BEGIN marks the end of the optional declaration section.
     while (scan->have(symbol::identifier) ||
+
+
            scan->have(symbol::procedure_sym) ||
            scan->have(symbol::function_sym)) {
         declaration();
@@ -193,36 +251,111 @@ void parser::declaration() {
     else if (scan->have(symbol::procedure_sym) ||
              scan->have(symbol::function_sym)) {
 
+
         bool is_function = scan->have(symbol::function_sym);
 
         expect(is_function ? symbol::function_sym
                            : symbol::procedure_sym);
 
+        // Remember the procedure or function name.
+        token routine_token = *scan->this_token();
         expect(symbol::identifier);
 
-        // Enter a separate scope for procedure/function parameters.
+        // Determine whether this is a function or procedure.
+        lille_type routine_type(
+            is_function ? lille_type::type_func
+                        : lille_type::type_proc
+        );
+
+        // Register the name in its enclosing scope.
+        bool inserted = id_tab->insert_identifier(
+            routine_token.get_identifier_value(),
+            routine_type,
+            lille_kind(lille_kind::unknown),
+            routine_token.get_line_number(),
+            routine_token.get_pos_on_line()
+        );
+
+        // Error 82: Duplicate declaration.
+        if (!inserted) {
+            errors->flag(&routine_token, 82);
+            throw parse_failed{};
+        }
+
+        // Enter a separate scope for parameters and local variables.
         id_tab->enter_scope();
+
 
         // Formal parameters are optional.
         if (scan->have(symbol::left_paren_sym)) {
             expect(symbol::left_paren_sym);
-            parameter_list();
+            parameter_list(routine_token.get_identifier_value());
             expect(symbol::right_paren_sym);
         }
+
 
         // Functions require a return type in their declaration.
         if (is_function) {
             expect(symbol::return_sym);
+
+            // Determine the function's declared return type.
+            lille_type declared_return_type(lille_type::type_unknown);
+
+            if (scan->have(symbol::integer_sym))
+                declared_return_type = lille_type(lille_type::type_integer);
+            else if (scan->have(symbol::real_sym))
+                declared_return_type = lille_type(lille_type::type_real);
+            else if (scan->have(symbol::string_sym))
+                declared_return_type = lille_type(lille_type::type_string);
+            else if (scan->have(symbol::boolean_sym))
+                declared_return_type = lille_type(lille_type::type_boolean);
+
+            // Consume the declared type.
             type_name();
+
+            // Store the return type in the function's BST entry.
+            id_tab->set_routine_return_type(
+                routine_token.get_identifier_value(),
+                declared_return_type
+            );
         }
+
+
 
         expect(symbol::is_sym);
 
-        // Procedures and functions contain their own blocks.
+        // Retrieve the declared return type.
+        std::vector<lille_type> formal_types;
+        std::vector<lille_kind> formal_modes;
+        lille_type expected_return_type(lille_type::type_unknown);
+
+        id_tab->get_routine_signature(
+            routine_token.get_identifier_value(),
+            formal_types,
+            formal_modes,
+            expected_return_type
+        );
+
+        // Track this routine while parsing its body.
+        routine_return_types.push_back(expected_return_type);
+        routine_has_return.push_back(false);
+
+        // Parse the procedure or function body.
         block();
+
+        // Error 109: Functions require at least one RETURN.
+        if (is_function && !routine_has_return.back()) {
+            errors->flag(&routine_token, 109);
+            throw parse_failed{};
+        }
+
+        // Restore the enclosing routine context.
+        routine_return_types.pop_back();
+        routine_has_return.pop_back();
 
         // Print and exit this procedure/function scope.
         id_tab->exit_scope();
+
 
         expect(symbol::semicolon_sym);
     }
@@ -237,7 +370,7 @@ void parser::identifier_list() {
     // Clear identifiers from the previous declaration.
     declaration_names.clear();
 
-    // Save the identifier before consuming its token.
+    // Save the identifier before consuming the token.
     declaration_names.push_back(*scan->this_token());
     expect(symbol::identifier);
 
@@ -267,17 +400,24 @@ void parser::type_name() {
 }
 
 // <param_list> ::= <param> { ; <param> }*
-void parser::parameter_list() {
-    parameter();
+
+/*
+ * Parse the parameter list for a procedure or function.
+ * Pass the routine name so parameters can be recorded
+ * in the routine's symbol-table entry.
+ */
+void parser::parameter_list(const std::string& routine_name) {
+    parameter(routine_name);
 
     while (scan->have(symbol::semicolon_sym)) {
         expect(symbol::semicolon_sym);
-        parameter();
+        parameter(routine_name);
     }
 }
 
+
 // Parse parameters and insert them into their procedure/function scope.
-void parser::parameter() {
+void parser::parameter(const std::string& routine_name) {
     identifier_list();
     expect(symbol::colon_sym);
 
@@ -311,6 +451,7 @@ void parser::parameter() {
 
     type_name();
 
+
     // Insert parameters into the current scope's BST.
     for (token& name_token : declaration_names) {
         bool inserted = id_tab->insert_identifier(
@@ -326,8 +467,18 @@ void parser::parameter() {
             errors->flag(&name_token, 82);
             throw parse_failed{};
         }
+
+        // Record this parameter in the enclosing
+        // procedure or function's symbol-table entry.
+        id_tab->add_routine_parameter(
+            routine_name,
+            param_type,
+            param_kind
+        );
     }
 }
+
+
 
 // FIRST(statement) tells us which tokens can begin a statement.
 // END, ELSE, and ELSIF signal that the statement list should finish.
@@ -357,6 +508,7 @@ void parser::statement_list() {
 }
 
 // Check whether the current token can begin an expression.
+
 bool parser::starts_expression() {
     return scan->have(symbol::identifier) ||
            scan->have(symbol::integer) ||
@@ -517,6 +669,7 @@ lille_type parser::expression2() {
         else if (scan->have(symbol::minus_sym))
             expect(symbol::minus_sym);
         else
+
             expect(symbol::or_sym);
 
         // Get the type of the right operand.
@@ -678,6 +831,7 @@ lille_type parser::factor() {
 
         // Unary signs require INTEGER or REAL.
         if (!operand_type.is_type(lille_type::type_unknown) &&
+
             !operand_type.is_type(lille_type::type_integer) &&
             !operand_type.is_type(lille_type::type_real)) {
 
@@ -749,7 +903,7 @@ lille_type parser::primary() {
 
         return lille_type(lille_type::type_boolean);
     }
-    
+
     else if (scan->have(symbol::left_paren_sym)) {
         expect(symbol::left_paren_sym);
 
@@ -784,22 +938,126 @@ lille_type parser::primary() {
 
         expect(symbol::identifier);
 
-        // Optional function argument list.
+
+        // Validate function calls and their arguments.
         if (scan->have(symbol::left_paren_sym)) {
+
+            // Only functions can be called in expressions.
+            if (!found_type.is_type(lille_type::type_func)) {
+                errors->flag(&name_token, 121);
+                throw parse_failed{};
+            }
+
+            // Retrieve the function's declared signature.
+            std::vector<lille_type> parameter_types;
+            std::vector<lille_kind> parameter_modes;
+            lille_type return_type(lille_type::type_unknown);
+
+            bool signature_found = id_tab->get_routine_signature(
+                name_token.get_identifier_value(),
+                parameter_types,
+                parameter_modes,
+                return_type
+            );
+
+            if (!signature_found) {
+                errors->flag(&name_token, 121);
+                throw parse_failed{};
+            }
+
+
+            // Collect function arguments and validate REF parameters.
+            std::vector<lille_type> actual_types;
+
             expect(symbol::left_paren_sym);
 
-            expression();
+            if (!scan->have(symbol::right_paren_sym)) {
+                while (true) {
+                    size_t index = actual_types.size();
+                    token argument_token = *scan->this_token();
 
-            while (scan->have(symbol::comma_sym)) {
-                expect(symbol::comma_sym);
-                expression();
+                    bool needs_reference =
+                        index < parameter_modes.size() &&
+                        parameter_modes[index].is_kind(
+                            lille_kind::ref_param);
+
+                    if (needs_reference) {
+                        // REF arguments must be identifiers.
+                        if (!scan->have(symbol::identifier)) {
+                            errors->flag(&argument_token, 99);
+                            throw parse_failed{};
+                        }
+
+                        lille_type argument_type;
+                        lille_kind argument_kind;
+                        int argument_scope = -1;
+
+                        bool found = id_tab->lookup_identifier(
+                            argument_token.get_identifier_value(),
+                            argument_type,
+                            argument_kind,
+                            argument_scope
+                        );
+
+                        if (!found) {
+                            errors->flag(&argument_token, 81);
+                            throw parse_failed{};
+                        }
+
+                        expect(symbol::identifier);
+
+                        // REF cannot receive an expression.
+                        if (!scan->have(symbol::comma_sym) &&
+                            !scan->have(symbol::right_paren_sym)) {
+                            errors->flag(&argument_token, 99);
+                            throw parse_failed{};
+                        }
+
+                        // Only assignable identifiers qualify.
+                        if (!argument_kind.is_kind(lille_kind::variable) &&
+                            !argument_kind.is_kind(lille_kind::ref_param)) {
+                            errors->flag(&argument_token, 99);
+                            throw parse_failed{};
+                        }
+
+                        actual_types.push_back(argument_type);
+                    }
+                    else {
+                        // VALUE parameters accept expressions.
+                        actual_types.push_back(expression());
+                    }
+
+                    if (!scan->have(symbol::comma_sym))
+                        break;
+
+                    expect(symbol::comma_sym);
+                }
             }
 
             expect(symbol::right_paren_sym);
 
-            // Function return types will be handled later.
-            return lille_type(lille_type::type_unknown);
+
+            // Error 97: Incorrect number of arguments.
+            if (actual_types.size() != parameter_types.size()) {
+                errors->flag(&name_token, 97);
+                throw parse_failed{};
+            }
+
+            // Error 98: Incompatible argument types.
+            for (size_t i = 0; i < actual_types.size(); i++) {
+                if (!actual_types[i].is_type(lille_type::type_unknown) &&
+                    !parameter_types[i].is_type(lille_type::type_unknown) &&
+                    !actual_types[i].is_type(parameter_types[i])) {
+
+                    errors->flag(&name_token, 98);
+                    throw parse_failed{};
+                }
+            }
+
+            // Return the function's declared result type.
+            return return_type;
         }
+
 
         // Return the declared identifier type.
         return found_type;
@@ -887,20 +1145,141 @@ void parser::statement() {
             }
 
         }
-        else if (scan->have(symbol::left_paren_sym)) {
-            // Procedure call with arguments.
-            expect(symbol::left_paren_sym);
-            expression();
 
-            while (scan->have(symbol::comma_sym)) {
-                expect(symbol::comma_sym);
-                expression();
+        else {
+            // This identifier must be a declared procedure.
+            lille_type found_type;
+            lille_kind found_kind;
+            int found_scope = -1;
+
+            bool found = id_tab->lookup_identifier(
+                name_token.get_identifier_value(),
+                found_type,
+                found_kind,
+                found_scope
+            );
+
+            // Error 81: Undeclared procedure.
+            if (!found) {
+                errors->flag(&name_token, 81);
+                throw parse_failed{};
             }
 
-            expect(symbol::right_paren_sym);
+            // Error 90: Identifier must be a procedure.
+            if (!found_type.is_type(lille_type::type_proc)) {
+                errors->flag(&name_token, 90);
+                throw parse_failed{};
+            }
+
+            // Retrieve the procedure's formal parameters.
+            std::vector<lille_type> parameter_types;
+            std::vector<lille_kind> parameter_modes;
+            lille_type return_type(lille_type::type_unknown);
+
+            bool signature_found = id_tab->get_routine_signature(
+                name_token.get_identifier_value(),
+                parameter_types,
+                parameter_modes,
+                return_type
+            );
+
+            if (!signature_found) {
+                errors->flag(&name_token, 90);
+                throw parse_failed{};
+            }
+
+           
+            // Collect and validate actual arguments.
+            std::vector<lille_type> actual_types;
+
+            if (scan->have(symbol::left_paren_sym)) {
+                expect(symbol::left_paren_sym);
+
+                if (!scan->have(symbol::right_paren_sym)) {
+                    while (true) {
+                        size_t index = actual_types.size();
+                        token argument_token = *scan->this_token();
+
+                        bool needs_reference =
+                            index < parameter_modes.size() &&
+                            parameter_modes[index].is_kind(
+                                lille_kind::ref_param);
+
+                        if (needs_reference) {
+                            // REF arguments must be identifiers.
+                            if (!scan->have(symbol::identifier)) {
+                                errors->flag(&argument_token, 99);
+                                throw parse_failed{};
+                            }
+
+                            lille_type argument_type;
+                            lille_kind argument_kind;
+                            int argument_scope = -1;
+
+                            bool found = id_tab->lookup_identifier(
+                                argument_token.get_identifier_value(),
+                                argument_type,
+                                argument_kind,
+                                argument_scope
+                            );
+
+                            if (!found) {
+                                errors->flag(&argument_token, 81);
+                                throw parse_failed{};
+                            }
+
+                            expect(symbol::identifier);
+
+                            // Reject expressions such as X + 1.
+                            if (!scan->have(symbol::comma_sym) &&
+                                !scan->have(symbol::right_paren_sym)) {
+                                errors->flag(&argument_token, 99);
+                                throw parse_failed{};
+                            }
+
+                            // REF requires an assignable identifier.
+                            if (!argument_kind.is_kind(lille_kind::variable) &&
+                                !argument_kind.is_kind(lille_kind::ref_param)) {
+                                errors->flag(&argument_token, 99);
+                                throw parse_failed{};
+                            }
+
+                            actual_types.push_back(argument_type);
+                        }
+                        else {
+                            // VALUE parameters accept expressions.
+                            actual_types.push_back(expression());
+                        }
+
+                        if (!scan->have(symbol::comma_sym))
+                            break;
+
+                        expect(symbol::comma_sym);
+                    }
+                }
+
+                expect(symbol::right_paren_sym);
+            }
+
+            // Error 97: Parameter count mismatch.
+            if (actual_types.size() != parameter_types.size()) {
+                errors->flag(&name_token, 97);
+                throw parse_failed{};
+            }
+
+            // Error 98: Parameter type mismatch.
+            for (size_t i = 0; i < actual_types.size(); i++) {
+                if (!actual_types[i].is_type(lille_type::type_unknown) &&
+                    !parameter_types[i].is_type(lille_type::type_unknown) &&
+                    !actual_types[i].is_type(parameter_types[i])) {
+                    errors->flag(&name_token, 98);
+                    throw parse_failed{};
+                }
+            }
+
+
         }
 
-        // Otherwise, the identifier alone is a procedure call.
     }
     else if (scan->have(symbol::exit_sym)) {
         expect(symbol::exit_sym);
@@ -911,13 +1290,44 @@ void parser::statement() {
             expression();
         }
     }
+
     else if (scan->have(symbol::return_sym)) {
+        token return_token = *scan->this_token();
         expect(symbol::return_sym);
 
-        // RETURN can have an optional expression.
-        if (starts_expression())
-            expression();
+        // Error 88: RETURN cannot appear in the main program.
+        if (routine_return_types.empty()) {
+            errors->flag(&return_token, 88);
+            throw parse_failed{};
+        }
+
+        // Determine whether RETURN includes an expression.
+        bool has_expression = starts_expression();
+        lille_type actual_type(lille_type::type_unknown);
+
+        if (has_expression) {
+            actual_type = expression();
+        }
+
+        // Get the expected type of the active routine.
+        lille_type expected_type = routine_return_types.back();
+
+        // Functions must return the declared type.
+        if (!expected_type.is_type(lille_type::type_unknown)) {
+            if (!has_expression ||
+                (!actual_type.is_type(lille_type::type_unknown) &&
+                 !actual_type.is_type(expected_type))) {
+
+                // Error 87: Incorrect function return type.
+                errors->flag(&return_token, 87);
+                throw parse_failed{};
+            }
+
+            // This function contains a valid RETURN statement.
+            routine_has_return.back() = true;
+        }
     }
+
     else if (scan->have(symbol::read_sym)) {
         expect(symbol::read_sym);
 
