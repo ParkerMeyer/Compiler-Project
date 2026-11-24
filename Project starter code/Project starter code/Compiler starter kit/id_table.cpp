@@ -158,6 +158,132 @@ bool id_table::lookup_identifier(const string& name,
     return false;
 }
 
+/*
+ * Add parameter information to a procedure or function.
+ * The routine is declared in the enclosing scope.
+ */
+bool id_table::add_routine_parameter(const string& routine_name,
+                                     lille_type parameter_type,
+                                     lille_kind parameter_mode)
+{
+    // Parameters belong to a routine in an enclosing scope.
+    if (current_scope == 0)
+        return false;
+
+    // Search the enclosing scope's BST.
+    bst_node* current = scope_roots[current_scope - 1];
+
+    while (current != nullptr)
+    {
+        if (routine_name == current->name)
+        {
+            // Make sure the identifier is a routine.
+            if (!current->type.is_type(lille_type::type_proc) &&
+                !current->type.is_type(lille_type::type_func))
+                return false;
+
+            // Store the parameter's type and passing mode.
+            current->parameter_types.push_back(parameter_type);
+            current->parameter_modes.push_back(parameter_mode);
+
+            return true;
+        }
+        else if (routine_name < current->name)
+        {
+            current = current->left;
+        }
+        else
+        {
+            current = current->right;
+        }
+    }
+
+    return false;
+
+	
+}
+
+/*
+ * Retrieve the signature of a procedure or function.
+ * Search from the current scope outward.
+ */
+bool id_table::get_routine_signature(
+    const string& routine_name,
+    vector<lille_type>& parameter_types,
+    vector<lille_kind>& parameter_modes,
+    lille_type& return_type)
+{
+    for (int level = current_scope; level >= 0; level--)
+    {
+        bst_node* current = scope_roots[level];
+
+        while (current != nullptr)
+        {
+            if (routine_name == current->name)
+            {
+                // Only procedures and functions have signatures.
+                if (!current->type.is_type(lille_type::type_proc) &&
+                    !current->type.is_type(lille_type::type_func))
+                    return false;
+
+                parameter_types = current->parameter_types;
+                parameter_modes = current->parameter_modes;
+                return_type = current->return_type;
+
+                return true;
+            }
+            else if (routine_name < current->name)
+            {
+                current = current->left;
+            }
+            else
+            {
+                current = current->right;
+            }
+        }
+    }
+
+    return false;
+}
+
+
+/*
+ * Set a function's return type.
+ * Search active scopes from innermost to outermost.
+ */
+bool id_table::set_routine_return_type(
+    const string& routine_name,
+    lille_type return_type)
+{
+    for (int level = current_scope; level >= 0; level--)
+    {
+        bst_node* current = scope_roots[level];
+
+        while (current != nullptr)
+        {
+            if (routine_name == current->name)
+            {
+                // Only functions have return types.
+                if (!current->type.is_type(lille_type::type_func))
+                    return false;
+
+                current->return_type = return_type;
+                return true;
+            }
+            else if (routine_name < current->name)
+            {
+                current = current->left;
+            }
+            else
+            {
+                current = current->right;
+            }
+        }
+    }
+
+    return false;
+}
+
 
 /*
  * Print a BST using inorder traversal.
@@ -180,6 +306,31 @@ void id_table::print_tree_inorder(bst_node* node)
          << " | Line: " << node->line_number
          << " | Position: " << node->position
          << endl;
+
+
+    // Display parameter information for procedures and functions.
+    if (node->type.is_type(lille_type::type_proc) ||
+        node->type.is_type(lille_type::type_func)) {
+
+        std::cout << "  Parameter Count: "
+                  << node->parameter_types.size() << std::endl;
+
+        for (size_t i = 0; i < node->parameter_types.size(); i++) {
+            std::cout << "    Parameter " << (i + 1)
+                      << " | Type: "
+                      << node->parameter_types[i].to_string()
+                      << " | Mode: "
+                      << node->parameter_modes[i].to_string()
+                      << std::endl;
+        }
+
+        if (node->type.is_type(lille_type::type_func)) {
+            std::cout << "  Return Type: "
+                      << node->return_type.to_string()
+                      << std::endl;
+        }
+    }
+
 
     print_tree_inorder(node->right);
 }
