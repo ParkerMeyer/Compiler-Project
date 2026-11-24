@@ -41,12 +41,37 @@ void parser::parse() {
 }
 
 // <prog> ::= program <ident> is <block> ;
+
 void parser::program() {
     expect(symbol::program_sym);
+
+    // Save the program identifier before advancing the scanner.
+    token* program_token = scan->this_token();
+    string program_name = program_token->get_identifier_value();
+    int program_line = program_token->get_line_number();
+    int program_position = program_token->get_pos_on_line();
+
     expect(symbol::identifier);
     expect(symbol::is_sym);
 
+
+    // Store the program name in global scope 0.
+    id_tab->insert_identifier(
+        program_name,
+        lille_type(lille_type::type_prog),
+        lille_kind(lille_kind::unknown),
+        program_line,
+        program_position
+    );
+
+
+    // Enter the program's scope.
+    id_tab->enter_scope();
+
     block();
+
+    // Print the symbol table and exit the program's scope.
+    id_tab->exit_scope();
 
     expect(symbol::semicolon_sym);
 }
@@ -84,8 +109,47 @@ void parser::declaration() {
         // CONSTANT is optional in the grammar.
         if (scan->have(symbol::constant_sym))
             expect(symbol::constant_sym);
+            bool is_constant = scan->have(symbol::constant_sym);
+        
+        // Determine the declared type.
+        lille_type declared_type(lille_type::type_unknown);
 
+        if (scan->have(symbol::integer_sym))
+            declared_type = lille_type(lille_type::type_integer);
+        else if (scan->have(symbol::real_sym))
+            declared_type = lille_type(lille_type::type_real);
+        else if (scan->have(symbol::string_sym))
+            declared_type = lille_type(lille_type::type_string);
+        else if (scan->have(symbol::boolean_sym))
+            declared_type = lille_type(lille_type::type_boolean);
+
+        // Parse the type normally.
         type_name();
+
+        // Determine whether this is a variable or constant.
+        lille_kind declared_kind(
+            is_constant ? lille_kind::constant : lille_kind::variable
+        );
+
+        // Insert every declared identifier into the current BST.
+        for (token& name_token : declaration_names)
+        {
+            bool inserted = id_tab->insert_identifier(
+                name_token.get_identifier_value(),
+                declared_type,
+                declared_kind,
+                name_token.get_line_number(),
+                name_token.get_pos_on_line()
+            );
+
+            // Error 82: Duplicate declaration in the same scope.
+            if (!inserted)
+            {
+                errors->flag(&name_token, 82);
+                throw parse_failed{};
+            }
+        }
+
 
         // A declaration can optionally have a literal initializer.
         // Type and constant restrictions belong to semantic analysis.
@@ -146,17 +210,22 @@ void parser::declaration() {
     }
 }
 
-
-// <ident_list> ::= <ident> { , <ident> }*
 void parser::identifier_list() {
+    // Clear identifiers from the previous declaration.
+    declaration_names.clear();
+
+    // Save the identifier before consuming its token.
+    declaration_names.push_back(*scan->this_token());
     expect(symbol::identifier);
 
     while (scan->have(symbol::comma_sym)) {
         expect(symbol::comma_sym);
+
+        // Save each additional identifier.
+        declaration_names.push_back(*scan->this_token());
         expect(symbol::identifier);
     }
 }
-
 
 // <type> ::= integer | real | string | boolean
 void parser::type_name() {
