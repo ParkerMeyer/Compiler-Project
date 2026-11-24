@@ -7,7 +7,11 @@
  * Implements recursive-descent parsing for Lille.
  * Implements program structure, declarations, simple and compound
  * statements, and precedence-aware expression parsing.
- * Semantic analysis: checks declared assignment targets using the symbol table.
+ *
+ * Semantic Analysis:
+ * Uses the symbol table to track identifiers and scopes,
+ * detects undeclared and duplicate identifiers, checks
+ * assignment targets, and begins expression type checking.
  */
 
 #include "parser.h"
@@ -43,7 +47,6 @@ void parser::parse() {
 }
 
 // <prog> ::= program <ident> is <block> ;
-
 void parser::program() {
     expect(symbol::program_sym);
 
@@ -112,7 +115,6 @@ void parser::block() {
     if (scan->have(symbol::identifier))
         expect(symbol::identifier);
 }
-
 
 // Handles variable, procedure, and function declarations.
 void parser::declaration() {
@@ -197,8 +199,10 @@ void parser::declaration() {
                            : symbol::procedure_sym);
 
         expect(symbol::identifier);
+
         // Enter a separate scope for procedure/function parameters.
         id_tab->enter_scope();
+
         // Formal parameters are optional.
         if (scan->have(symbol::left_paren_sym)) {
             expect(symbol::left_paren_sym);
@@ -214,13 +218,13 @@ void parser::declaration() {
 
         expect(symbol::is_sym);
 
-// Procedures and functions contain their own blocks.
-block();
+        // Procedures and functions contain their own blocks.
+        block();
 
-// Print and exit this procedure/function scope.
-id_tab->exit_scope();
+        // Print and exit this procedure/function scope.
+        id_tab->exit_scope();
 
-expect(symbol::semicolon_sym);
+        expect(symbol::semicolon_sym);
     }
     else {
         errors->flag(scan->this_token(), 106);
@@ -228,6 +232,7 @@ expect(symbol::semicolon_sym);
     }
 }
 
+// Parse and temporarily save a list of identifiers.
 void parser::identifier_list() {
     // Clear identifiers from the previous declaration.
     declaration_names.clear();
@@ -261,7 +266,6 @@ void parser::type_name() {
     }
 }
 
-
 // <param_list> ::= <param> { ; <param> }*
 void parser::parameter_list() {
     parameter();
@@ -272,8 +276,7 @@ void parser::parameter_list() {
     }
 }
 
-
-
+// Parse parameters and insert them into their procedure/function scope.
 void parser::parameter() {
     identifier_list();
     expect(symbol::colon_sym);
@@ -326,10 +329,8 @@ void parser::parameter() {
     }
 }
 
-
 // FIRST(statement) tells us which tokens can begin a statement.
-// END, ELSE, and ELSIF are not included because they signal
-// that the current statement list should finish.
+// END, ELSE, and ELSIF signal that the statement list should finish.
 static bool starts_statement(scanner* scan) {
     return scan->have(symbol::identifier) ||
            scan->have(symbol::exit_sym) ||
@@ -356,7 +357,6 @@ void parser::statement_list() {
 }
 
 // Check whether the current token can begin an expression.
-// This will also be used for optional RETURN expressions.
 bool parser::starts_expression() {
     return scan->have(symbol::identifier) ||
            scan->have(symbol::integer) ||
@@ -373,10 +373,17 @@ bool parser::starts_expression() {
 
 // <expr> ::= <simple_expr> [ <relop> <simple_expr> ]
 //          | <simple_expr> IN <range>
-void parser::expression() {
-    simple_expression();
 
-    // FIRST(relop): comparison operators.
+/*
+ * Parse a complete expression and return its type.
+ * Relational comparisons and IN expressions produce BOOLEAN.
+ */
+lille_type parser::expression() {
+
+    // Get the type of the first simple expression.
+    lille_type result_type = simple_expression();
+
+    // Check for relational comparison operators.
     if (scan->have(symbol::equals_sym) ||
         scan->have(symbol::not_equals_sym) ||
         scan->have(symbol::less_than_sym) ||
@@ -384,7 +391,6 @@ void parser::expression() {
         scan->have(symbol::less_or_equal_sym) ||
         scan->have(symbol::greater_or_equal_sym)) {
 
-        // Consume whichever comparison operator is present.
         if (scan->have(symbol::equals_sym))
             expect(symbol::equals_sym);
         else if (scan->have(symbol::not_equals_sym))
@@ -398,34 +404,75 @@ void parser::expression() {
         else
             expect(symbol::greater_or_equal_sym);
 
+        // Parse the expression on the right side.
         simple_expression();
+
+        // Comparisons produce BOOLEAN results.
+        return lille_type(lille_type::type_boolean);
     }
     else if (scan->have(symbol::in_sym)) {
         expect(symbol::in_sym);
         range();
+
+        // IN expressions also produce BOOLEAN results.
+        return lille_type(lille_type::type_boolean);
     }
+
+    // No comparison operator: return the original type.
+    return result_type;
 }
 
 
 // <simple_expr> ::= <expr2> { & <expr2> }*
-void parser::simple_expression() {
-    expression2();
 
-    // String concatenation.
+/*
+ * Parse a simple expression and return its type.
+ * Handles string concatenation using the & operator.
+ */
+lille_type parser::simple_expression() {
+
+    // Get the type of the first expression.
+    lille_type result_type = expression2();
+
+    // Process string concatenation operators.
     while (scan->have(symbol::ampersand_sym)) {
         expect(symbol::ampersand_sym);
+
+        // Parse the next part of the expression.
         expression2();
+
+        // Compatibility checking will be added later.
+        result_type = lille_type(lille_type::type_unknown);
     }
+
+    return result_type;
 }
 
 
 // <expr2> ::= <term> { (+ | - | OR) <term> }*
-void parser::expression2() {
-    term();
+
+/*
+ * Parse addition, subtraction, and Boolean OR expressions.
+ * Return the type of the resulting expression.
+ */
+
+/*
+ * Parse addition, subtraction, and Boolean OR.
+ * Check operand types and return the resulting type.
+ */
+lille_type parser::expression2() {
+
+    // Get the type of the first term.
+    lille_type result_type = term();
 
     while (scan->have(symbol::plus_sym) ||
            scan->have(symbol::minus_sym) ||
            scan->have(symbol::or_sym)) {
+
+        // Remember the operator for error reporting.
+        token operator_token = *scan->this_token();
+
+        bool is_or = scan->have(symbol::or_sym);
 
         if (scan->have(symbol::plus_sym))
             expect(symbol::plus_sym);
@@ -434,18 +481,79 @@ void parser::expression2() {
         else
             expect(symbol::or_sym);
 
-        term();
+        // Get the type of the right operand.
+        lille_type right_type = term();
+
+        // Some expression types are still unfinished.
+        if (result_type.is_type(lille_type::type_unknown) ||
+            right_type.is_type(lille_type::type_unknown)) {
+            result_type = lille_type(lille_type::type_unknown);
+            continue;
+        }
+
+        if (is_or) {
+            // OR requires two Boolean expressions.
+            if (!result_type.is_type(lille_type::type_boolean) ||
+                !right_type.is_type(lille_type::type_boolean)) {
+                errors->flag(&operator_token, 117);
+                throw parse_failed{};
+            }
+
+            result_type = lille_type(lille_type::type_boolean);
+        }
+        else {
+            // Addition and subtraction require numeric operands.
+            bool left_numeric =
+                result_type.is_type(lille_type::type_integer) ||
+                result_type.is_type(lille_type::type_real);
+
+            bool right_numeric =
+                right_type.is_type(lille_type::type_integer) ||
+                right_type.is_type(lille_type::type_real);
+
+            if (!left_numeric || !right_numeric) {
+                errors->flag(&operator_token, 116);
+                throw parse_failed{};
+            }
+
+            // Require matching numeric types.
+            if (!result_type.is_type(right_type)) {
+                errors->flag(&operator_token, 114);
+                throw parse_failed{};
+            }
+
+            // The result keeps its numeric type.
+        }
     }
+
+    return result_type;
 }
 
 
 // <term> ::= <factor> { (* | / | AND) <factor> }*
-void parser::term() {
-    factor();
+
+/*
+ * Parse a term and return its resulting type.
+ * Handles multiplication, division, and Boolean AND.
+ */
+
+/*
+ * Parse multiplication, division, and Boolean AND.
+ * Check operand types and return the resulting type.
+ */
+lille_type parser::term() {
+
+    // Get the type of the first factor.
+    lille_type result_type = factor();
 
     while (scan->have(symbol::asterisk_sym) ||
            scan->have(symbol::slash_sym) ||
            scan->have(symbol::and_sym)) {
+
+        // Remember the operator for error reporting.
+        token operator_token = *scan->this_token();
+
+        bool is_and = scan->have(symbol::and_sym);
 
         if (scan->have(symbol::asterisk_sym))
             expect(symbol::asterisk_sym);
@@ -454,16 +562,64 @@ void parser::term() {
         else
             expect(symbol::and_sym);
 
-        factor();
+        // Get the right operand's type.
+        lille_type right_type = factor();
+
+        // Skip unfinished expression types for now.
+        if (result_type.is_type(lille_type::type_unknown) ||
+            right_type.is_type(lille_type::type_unknown)) {
+            result_type = lille_type(lille_type::type_unknown);
+            continue;
+        }
+
+        if (is_and) {
+            // AND requires two Boolean operands.
+            if (!result_type.is_type(lille_type::type_boolean) ||
+                !right_type.is_type(lille_type::type_boolean)) {
+                errors->flag(&operator_token, 117);
+                throw parse_failed{};
+            }
+
+            result_type = lille_type(lille_type::type_boolean);
+        }
+        else {
+            // Multiplication and division require numbers.
+            bool left_numeric =
+                result_type.is_type(lille_type::type_integer) ||
+                result_type.is_type(lille_type::type_real);
+
+            bool right_numeric =
+                right_type.is_type(lille_type::type_integer) ||
+                right_type.is_type(lille_type::type_real);
+
+            if (!left_numeric || !right_numeric) {
+                errors->flag(&operator_token, 116);
+                throw parse_failed{};
+            }
+
+            // Initial rule: require matching numeric types.
+            if (!result_type.is_type(right_type)) {
+                errors->flag(&operator_token, 114);
+                throw parse_failed{};
+            }
+        }
     }
+
+    return result_type;
 }
+
 
 
 // <factor> ::= <primary> [ ** <primary> ]
 //            | [ + | - ] <primary>
-void parser::factor() {
 
-    // A factor can start with a unary sign.
+/*
+ * Parse a factor and return its type.
+ * Handles unary signs and optional exponentiation.
+ */
+lille_type parser::factor() {
+
+    // Check for an optional unary plus or minus.
     if (scan->have(symbol::plus_sym) ||
         scan->have(symbol::minus_sym)) {
 
@@ -472,43 +628,55 @@ void parser::factor() {
         else
             expect(symbol::minus_sym);
 
-        primary();
+        // Return the type of the primary expression.
+        return primary();
     }
-    else {
+
+    // Get the type of the primary expression.
+    lille_type result_type = primary();
+
+    // Exponentiation is optional.
+    if (scan->have(symbol::power_sym)) {
+        expect(symbol::power_sym);
         primary();
 
-        // Exponentiation is optional.
-        if (scan->have(symbol::power_sym)) {
-            expect(symbol::power_sym);
-            primary();
-        }
+        // Full exponentiation type checking comes later.
+        return lille_type(lille_type::type_unknown);
     }
+
+    return result_type;
 }
 
-
-// <primary> recognizes identifiers, literals,
-// parentheses, Boolean values, NOT, and ODD.
-void parser::primary() {
+/*
+ * Parse a primary expression and return its type.
+ * This is the foundation of expression type checking.
+ */
+lille_type parser::primary() {
 
     if (scan->have(symbol::not_sym)) {
         expect(symbol::not_sym);
         expression();
+
+        return lille_type(lille_type::type_boolean);
     }
     else if (scan->have(symbol::odd_sym)) {
         expect(symbol::odd_sym);
         expression();
+
+        return lille_type(lille_type::type_boolean);
     }
     else if (scan->have(symbol::left_paren_sym)) {
         expect(symbol::left_paren_sym);
         simple_expression();
         expect(symbol::right_paren_sym);
+
+        // Parenthesized expression types will be handled later.
+        return lille_type(lille_type::type_unknown);
     }
     else if (scan->have(symbol::identifier)) {
 
-        // Save the identifier before consuming it.
         token name_token = *scan->this_token();
 
-        // Look up the identifier in the active scopes.
         lille_type found_type;
         lille_kind found_kind;
         int found_scope = -1;
@@ -520,9 +688,7 @@ void parser::primary() {
             found_scope
         );
 
-        // Report an undeclared identifier.
-        if (!found)
-        {
+        if (!found) {
             errors->flag(&name_token, 81);
             throw parse_failed{};
         }
@@ -541,20 +707,35 @@ void parser::primary() {
             }
 
             expect(symbol::right_paren_sym);
+
+            // Function return types will be handled later.
+            return lille_type(lille_type::type_unknown);
         }
+
+        // Return the declared identifier type.
+        return found_type;
     }
-    else if (scan->have(symbol::integer))
+    else if (scan->have(symbol::integer)) {
         expect(symbol::integer);
-    else if (scan->have(symbol::real_num))
+        return lille_type(lille_type::type_integer);
+    }
+    else if (scan->have(symbol::real_num)) {
         expect(symbol::real_num);
-    else if (scan->have(symbol::strng))
+        return lille_type(lille_type::type_real);
+    }
+    else if (scan->have(symbol::strng)) {
         expect(symbol::strng);
-    else if (scan->have(symbol::true_sym))
+        return lille_type(lille_type::type_string);
+    }
+    else if (scan->have(symbol::true_sym)) {
         expect(symbol::true_sym);
-    else if (scan->have(symbol::false_sym))
+        return lille_type(lille_type::type_boolean);
+    }
+    else if (scan->have(symbol::false_sym)) {
         expect(symbol::false_sym);
+        return lille_type(lille_type::type_boolean);
+    }
     else {
-        // Unexpected token where a primary is required.
         errors->flag(scan->this_token(), 92);
         throw parse_failed{};
     }
@@ -600,17 +781,21 @@ void parser::statement() {
 
             expect(symbol::becomes_sym);
 
-            // Check whether a string literal is being assigned
-            // to a variable that is not of type STRING.
-            if (scan->have(symbol::strng) &&
-                !found_type.is_type(lille_type::type_string))
+            // Remember where the expression begins for error reporting.
+            token expression_token = *scan->this_token();
+
+            // Parse the expression and determine its type.
+            lille_type expression_type = expression();
+
+            // Check compatibility when both types are known.
+            if (!expression_type.is_type(lille_type::type_unknown) &&
+                !found_type.is_type(lille_type::type_unknown) &&
+                !found_type.is_type(expression_type))
             {
                 // Error 93: Assignment types are incompatible.
-                errors->flag(scan->this_token(), 93);
+                errors->flag(&expression_token, 93);
                 throw parse_failed{};
             }
-
-            expression();
 
         }
         else if (scan->have(symbol::left_paren_sym)) {
@@ -687,7 +872,6 @@ void parser::statement() {
         if (wrapped)
             expect(symbol::right_paren_sym);
     }
-
     else if (scan->have(symbol::null_sym)) {
         expect(symbol::null_sym);
     }
@@ -736,7 +920,6 @@ void parser::if_statement() {
     expect(symbol::if_sym);
 }
 
-
 // LOOP <statement_list> END LOOP
 void parser::loop_statement() {
     expect(symbol::loop_sym);
@@ -744,7 +927,6 @@ void parser::loop_statement() {
     expect(symbol::end_sym);
     expect(symbol::loop_sym);
 }
-
 
 // WHILE <expr> <loop_statement>
 void parser::while_statement() {
@@ -754,9 +936,6 @@ void parser::while_statement() {
     // Reuse the existing loop grammar.
     loop_statement();
 }
-
-
-// FOR <ident> IN [REVERSE] <range> <loop_statement>
 
 /*
  * Parse a FOR loop and register its loop identifier.
@@ -799,8 +978,6 @@ void parser::for_statement() {
     // Print the active symbol tables before exiting.
     id_tab->exit_scope();
 }
-
-
 
 // <range> ::= <simple_expr> .. <simple_expr>
 void parser::range() {
