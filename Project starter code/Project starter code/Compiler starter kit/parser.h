@@ -40,12 +40,12 @@ private:
     void while_statement();
     void range();
     bool starts_expression();
-    void expression();
-    void simple_expression();
-    void expression2();
-    void term();
-    void factor();
-    void primary();
+    lille_type expression();
+    lille_type simple_expression();
+    lille_type expression2();
+    lille_type term();
+    lille_type factor();
+    lille_type primary();
 public:
     parser(scanner* s, error_handler* e);
     void parse();
