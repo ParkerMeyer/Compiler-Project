@@ -1,28 +1,25 @@
-all:	compiler.o error_handler.o lille_exception.o scanner.o id_table.o symbol.o token.o
-	g++ -o compiler compiler.o error_handler.o lille_exception.o scanner.o symbol.o token.o
-	#echo Compilation complete.
+# Parker Meyer - CSC-4510
+# Parser Phase: Build the complete Lille scanner/parser project using GNU Make.
 
-compiler.o:	id_table.o error_handler.o lille_exception.o scanner.o symbol.o compiler.cpp
-	g++ -std=c++20 -c compiler.cpp
+CXX = g++
+CXXFLAGS = -std=c++20
+TARGET = compiler.exe
+SOURCES = compiler.cpp parser.cpp error_handler.cpp lille_exception.cpp scanner.cpp id_table.cpp symbol.cpp token.cpp lille_type.cpp lille_kind.cpp
+OBJECTS = $(SOURCES:.cpp=.o)
 
-error_handler.o: lille_exception.o token.o error_handler.h error_handler.cpp
-	g++ -std=c++20 -c error_handler.cpp
+.PHONY: all clean
+all: $(TARGET)
 
-id_table.o:: id_table.h id_table.cpp
-	g++ -std=c++20 -c id_table.cpp
+$(TARGET): $(OBJECTS)
+	$(CXX) $(CXXFLAGS) $(OBJECTS) -o $(TARGET)
 
-lille_exception.o:	lille_exception.h lille_exception.cpp
-	g++ -std=c++20 -c lille_exception.cpp
-
-scanner.o: error_handler.o lille_exception.o token.o symbol.o id_table.o scanner.h scanner.cpp
-	g++ -std=c++20 -c scanner.cpp
-
-symbol.o: symbol.h symbol.cpp
-	g++ -std=c++20 -c symbol.cpp
-
-token.o: lille_exception.o symbol.o token.h token.cpp
-	g++ -std=c++20 -c token.cpp
+# Headers are included to rebuild objects when parser declarations change.
+%.o: %.cpp $(wildcard *.h)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm *.o 
-	echo Clean complete
+ifeq ($(OS),Windows_NT)
+	-cmd /C "del /Q /F $(OBJECTS) $(TARGET) 2>NUL"
+else
+	rm -f $(OBJECTS) $(TARGET)
+endif
